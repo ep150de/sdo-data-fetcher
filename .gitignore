@@ -1,0 +1,60 @@
+# SDO Data - Downloaded Images
+sdo_data/
+*.jpg
+*.png
+*.fits
+*.jp2
+
+# Monitoring directories
+monitoring/
+continuous_monitoring/
+comparison_set/
+active_regions/
+space_weather/
+prominences/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+sdo_monitor.log
+
+# Generated scripts
+monitoring_daemon.py
