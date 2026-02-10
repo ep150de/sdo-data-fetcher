@@ -27,7 +27,7 @@ A powerful Python application to fetch real-time solar images from NASA's **Sola
 
 ```bash
 # Clone the repository
-git clone https://github.com/YOUR_USERNAME/sdo-data-fetcher.git
+git clone https://github.com/ep150de/sdo-data-fetcher.git
 cd sdo-data-fetcher
 
 # Install dependencies
