@@ -13,10 +13,10 @@ A powerful Python application to fetch real-time solar images from NASA's **Sola
 
 ## ✨ Features
 
-- 🔴 **Live Data** - Fetches the latest SDO observations (updated every 12 seconds!)
+- 🔴 **Live Data** - Fetches the latest SDO observations with automatic provider fallback
 - 🌈 **11 Wavelengths** - All AIA channels (94Å - 1700Å) plus HMI magnetogram
 - 📊 **Auto Metadata** - Each image includes JSON metadata with observation details
-- ⚡ **Fast & Reliable** - Direct from NASA servers, downloads in 1-2 seconds
+- ⚡ **Redundant Sources** - Automatically falls back across LMSAL Sun Today, Stanford JSOC, NASA SDO, and Helioviewer
 - 🎯 **CLI & Python API** - Use from command line or integrate into your code
 - 📦 **Batch Downloads** - Get multiple wavelengths simultaneously
 - 🔬 **Space Weather Ready** - Perfect for monitoring solar activity
@@ -39,6 +39,9 @@ pip install -r requirements.txt
 ```bash
 # Get the latest AIA 171Å image (default)
 python sdo_fetcher_v2.py
+
+# Force a specific provider
+python sdo_fetcher_v2.py --source AIA_171 --provider lmsal
 
 # Get a specific wavelength
 python sdo_fetcher_v2.py --source AIA_304
@@ -94,12 +97,24 @@ metadata = fetcher.get_latest_image_direct(source="AIA_171")
 
 if metadata:
     print(f"Image saved: {metadata['filepath']}")
-    print(f"Observation time: {metadata['last_modified']}")
+  print(f"Provider: {metadata['provider_name']}")
+  print(f"Observation time: {metadata['observation_time']}")
 
 # Download multiple wavelengths
 sources = ["AIA_171", "AIA_193", "AIA_304", "HMI_Magnetogram"]
 results = fetcher.download_multiple(sources)
 ```
+
+## 🔁 Redundant Live Data Providers
+
+The fetchers now support a provider chain for current imagery:
+
+- **LMSAL Sun Today** - Daily AIA and HMI browse images at `suntoday.lmsal.com`
+- **Stanford JSOC** - Latest HMI browse products at `jsoc1.stanford.edu`
+- **NASA SDO** - Latest public browse images at `sdo.gsfc.nasa.gov`
+- **Helioviewer** - API-based rendered imagery fallback
+
+Use `--provider auto` to try providers automatically, or pick one explicitly with `--provider lmsal`, `--provider jsoc`, `--provider nasa`, or `--provider helioviewer`.
 
 ## 🎓 Advanced Features
 

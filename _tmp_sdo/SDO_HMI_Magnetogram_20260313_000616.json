@@ -1,0 +1,14 @@
+{
+  "source": "HMI_Magnetogram",
+  "name": "HMI Magnetogram",
+  "wavelength": "Magnetogram",
+  "description": "HMI Magnetogram - Magnetic field",
+  "provider": "jsoc",
+  "provider_name": "Stanford JSOC",
+  "filepath": "_tmp_sdo\\SDO_HMI_Magnetogram_20260313_000616.gif",
+  "download_time": "2026-03-13T00:06:16.933166+00:00",
+  "image_url": "https://jsoc1.stanford.edu/data/hmi/images/latest/HMI_latest_Mag_1024x1024.gif",
+  "observation_time": "20260312_234038",
+  "content_type": "image/gif",
+  "last_modified": "Fri, 13 Mar 2026 00:00:03 GMT"
+}

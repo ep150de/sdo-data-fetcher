@@ -1,0 +1,15 @@
+{
+  "source": "AIA_171",
+  "name": "AIA 171",
+  "wavelength": "171\u00c5",
+  "description": "AIA 171 \u00c5 - Quiet corona and coronal loops",
+  "provider": "lmsal",
+  "provider_name": "LMSAL Sun Today",
+  "filepath": "_tmp_sdo\\SDO_AIA_171_20260313_000621.jpg",
+  "download_time": "2026-03-13T00:06:21.950542+00:00",
+  "image_url": "http://suntoday.lmsal.com/sdomedia/SunInTime/2026/03/12/t0171.jpg",
+  "observation_time": "Thu, 12 Mar 2026 23:47:03 GMT",
+  "content_type": "image/jpeg",
+  "last_modified": "Thu, 12 Mar 2026 23:47:03 GMT",
+  "date_path": "2026/03/12"
+}
