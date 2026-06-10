@@ -42,6 +42,9 @@ pip install -r requirements.txt
 # Get the latest AIA 171Å image (default)
 python sdo_fetcher_v2.py
 
+# Prefer high-resolution rendered output first, then fallback
+python sdo_fetcher_v2.py --source AIA_171 --provider auto_highres --width 4096 --image-type png
+
 # Force a specific provider
 python sdo_fetcher_v2.py --source AIA_171 --provider lmsal
 
@@ -159,9 +162,12 @@ The fetchers now support a provider chain for current imagery:
 - **LMSAL Sun Today** - Daily AIA and HMI browse images at `suntoday.lmsal.com`
 - **Stanford JSOC** - Latest HMI browse products at `jsoc1.stanford.edu`
 - **NASA SDO** - Latest public browse images at `sdo.gsfc.nasa.gov`
-- **Helioviewer** - API-based rendered imagery fallback
+- **Helioviewer** - API-based rendered imagery fallback (and high-resolution first mode)
 
-Use `--provider auto` to try providers automatically, or pick one explicitly with `--provider lmsal`, `--provider jsoc`, `--provider nasa`, or `--provider helioviewer`.
+Use `--provider auto` for browse-first fallback, `--provider auto_highres` for high-resolution-first fallback, or pick one explicitly with `--provider lmsal`, `--provider jsoc`, `--provider nasa`, or `--provider helioviewer`.
+
+For Helioviewer downloads (latest and historical), you can also request render settings with `--width` and `--image-type`.
+If fallback lands on browse providers (LMSAL/JSOC/NASA), those settings are not applied and metadata marks `render_settings_applied: false` with `resolution_class: browse_fixed`.
 
 ## 🎓 Advanced Features
 
@@ -200,6 +206,7 @@ Each JSON file contains:
 - Time delta between requested and actual observation
 - Download metadata
 - Direct image URL
+- Render provenance fields (`requested_image_width`, `requested_image_type`, `render_settings_applied`, `resolution_class`)
 
 ## 🔬 About NASA's SDO
 
