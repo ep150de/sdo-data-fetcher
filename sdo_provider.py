@@ -763,6 +763,7 @@ def generate_video_for_source(
     if fewer than 2 frames are found.
     """
     import imageio.v3 as iio
+    import numpy as np
 
     job_path = Path(job_dir)
     if not job_path.is_dir():
@@ -773,6 +774,7 @@ def generate_video_for_source(
         [d for d in job_path.iterdir() if d.is_dir() and d.name != "videos"],
         key=lambda d: d.name,
     )
+    print(f"[Video] {source_key}: scanning {len(timestamp_dirs)} timestamp dirs...")
 
     # Gather frames for this source
     frames_paths: list[Path] = []
@@ -784,29 +786,47 @@ def generate_video_for_source(
                 break  # one frame per timestamp per source
 
     if len(frames_paths) < 2:
+        print(f"[Video] {source_key}: only {len(frames_paths)} frame(s) found, skipping (need >= 2)")
         return None
 
     # Read frames, normalising to RGB
-    import numpy as np
-
     frames = []
     target_hw = None  # (height, width) only
     for fp in frames_paths:
-        img = iio.imread(fp)
+        try:
+            img = iio.imread(fp)
+        except Exception as exc:
+            print(f"[Video] {source_key}: failed to read {fp.name}: {exc}")
+            continue
         # Convert grayscale to RGB
         if img.ndim == 2:
             img = np.stack([img, img, img], axis=-1)
         # Convert RGBA to RGB
         elif img.ndim == 3 and img.shape[2] == 4:
             img = img[:, :, :3]
+        # Drop alpha-like extra channels beyond 3
+        elif img.ndim == 3 and img.shape[2] > 3:
+            img = img[:, :, :3]
         if target_hw is None:
             target_hw = img.shape[:2]
         # Only include frames with matching spatial dimensions
         if img.shape[:2] == target_hw:
-            frames.append(img)
+            frames.append(np.ascontiguousarray(img, dtype=np.uint8))
+
+    print(f"[Video] {source_key}: {len(frames_paths)} frames found, {len(frames)} valid after normalization")
 
     if len(frames) < 2:
+        print(f"[Video] {source_key}: fewer than 2 valid frames, skipping")
         return None
+
+    # Stack into a single (T, H, W, 3) array for the encoder. yuv420p requires
+    # even width/height, so crop a trailing row/column if needed.
+    video_array = np.stack(frames, axis=0)
+    h, w = video_array.shape[1], video_array.shape[2]
+    if h % 2 == 1:
+        video_array = video_array[:, : h - 1, :, :]
+    if w % 2 == 1:
+        video_array = video_array[:, :, : w - 1, :]
 
     # Write video
     video_dir = job_path / "videos"
@@ -815,16 +835,18 @@ def generate_video_for_source(
     wavelength_label = source_info.get("wavelength", source_key).replace("Å", "A")
     output_path = video_dir / f"SDO_{source_key}_{wavelength_label}_timelapse.mp4"
 
+    print(f"[Video] {source_key}: encoding {video_array.shape[0]} frames "
+          f"({video_array.shape[2]}x{video_array.shape[1]}) @ {fps} fps...")
     iio.imwrite(
         output_path,
-        frames,
+        video_array,
         fps=fps,
         plugin="pyav",
         codec="libx264",
         out_pixel_format="yuv420p",
     )
 
-    print(f"✓ Video saved: {output_path} ({len(frames)} frames @ {fps} fps)")
+    print(f"✓ Video saved: {output_path} ({video_array.shape[0]} frames @ {fps} fps)")
     return str(output_path)
 
 

@@ -26,9 +26,10 @@ from sdo_provider import (
 HOST = "127.0.0.1"
 PORT = 8765
 OUTPUT_DIR = Path("sdo_data")
-MAX_HOURS = 12
-MAX_SAMPLES = 96
+MAX_HOURS = 72  # soft ceiling for the UI slider; longer is allowed via direct input
+MAX_SAMPLES = 5000  # very high safety net per wavelength; effectively unlimited
 MAX_WIDTH = 2048
+LONG_FETCH_WARNING_HOURS = 12  # show a soft warning beyond this duration
 
 JOBS: Dict[str, Dict] = {}
 JOBS_LOCK = threading.Lock()
@@ -436,8 +437,39 @@ INDEX_HTML = """<!doctype html>
       display: none;
     }
 
+    .video-results-header {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 14px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid rgba(92, 255, 200, 0.4);
+    }
+
+    .video-results-header h3 {
+      margin: 0;
+      color: var(--ok);
+      font-size: 1.05rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .video-results-header #video-summary {
+      color: var(--muted);
+      font-size: 0.8rem;
+      flex: 1;
+      min-width: 120px;
+    }
+
+    .video-results-header button {
+      margin: 0;
+      width: auto;
+      padding: 8px 16px;
+      font-size: 0.78rem;
+    }
+
     .video-results h3 {
-      margin: 0 0 12px;
       color: var(--ok);
       font-size: 0.95rem;
       text-transform: uppercase;
@@ -446,7 +478,7 @@ INDEX_HTML = """<!doctype html>
 
     .video-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
       gap: 14px;
     }
 
@@ -456,12 +488,40 @@ INDEX_HTML = """<!doctype html>
       padding: 12px;
     }
 
+    .video-wrapper {
+      position: relative;
+    }
+
     .video-card video {
       width: 100%;
       aspect-ratio: 1;
       object-fit: contain;
       background: #000;
       border: 1px solid rgba(0, 199, 253, 0.35);
+      display: block;
+    }
+
+    .video-maximize-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      width: auto;
+      margin: 0;
+      padding: 4px 9px;
+      font-size: 1rem;
+      line-height: 1;
+      background: rgba(0, 0, 0, 0.72);
+      border: 1px solid var(--intel-light);
+      color: var(--white);
+      cursor: pointer;
+      box-shadow: none;
+      z-index: 2;
+      text-transform: none;
+    }
+
+    .video-maximize-btn:hover {
+      background: var(--intel-blue);
+      filter: none;
     }
 
     .video-card h4 {
@@ -476,9 +536,110 @@ INDEX_HTML = """<!doctype html>
       font-size: 0.75rem;
     }
 
-    .video-card a {
+    .video-card a.download-link {
+      display: inline-block;
+      margin-top: 6px;
+      padding: 6px 12px;
+      color: #00172a;
+      background: linear-gradient(180deg, var(--ok), #9affda);
+      border: 1px solid var(--white);
+      font-weight: 700;
+      font-size: 0.74rem;
+      text-decoration: none;
+      text-transform: uppercase;
+      box-shadow: 2px 2px 0 var(--intel-blue);
+    }
+
+    .video-card a.download-link:hover {
+      filter: brightness(1.1);
+    }
+
+    .video-errors {
+      margin-top: 16px;
+      padding: 10px 12px;
+      border: 1px solid rgba(255, 209, 102, 0.5);
+      background: rgba(255, 209, 102, 0.08);
+      font-size: 0.78rem;
+      color: var(--warning);
+      line-height: 1.6;
+    }
+
+    .video-errors strong { color: var(--white); }
+
+    /* --- Fullscreen video modal --- */
+    .video-modal {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      background: rgba(0, 0, 0, 0.93);
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .video-modal.open { display: flex; }
+
+    .video-modal video {
+      max-width: 92vw;
+      max-height: 74vh;
+      background: #000;
+      border: 2px solid var(--intel-light);
+      box-shadow: 0 0 40px rgba(0, 199, 253, 0.45);
+    }
+
+    .video-modal-info {
       color: var(--white);
-      font-size: 0.75rem;
+      margin-top: 16px;
+      text-align: center;
+      font-size: 0.95rem;
+    }
+
+    .video-modal-info span {
+      display: block;
+      color: var(--muted);
+      font-size: 0.8rem;
+      margin-top: 4px;
+    }
+
+    .video-modal-actions {
+      margin-top: 16px;
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .video-modal-actions a,
+    .video-modal-actions button {
+      width: auto;
+      margin: 0;
+      padding: 10px 18px;
+      font-size: 0.8rem;
+      text-decoration: none;
+    }
+
+    .video-modal-close {
+      position: absolute;
+      top: 16px;
+      right: 24px;
+      width: auto;
+      margin: 0;
+      padding: 8px 14px;
+      font-size: 1.1rem;
+      background: var(--danger);
+      color: var(--white);
+      border: 2px solid var(--white);
+      cursor: pointer;
+      box-shadow: 3px 3px 0 #7a1d26;
+      text-transform: none;
+    }
+
+    .slider-warning {
+      color: var(--warning);
+      font-weight: 700;
+      display: none;
     }
 
     .error { color: var(--danger); }
@@ -519,15 +680,20 @@ INDEX_HTML = """<!doctype html>
           <button type="button" data-hours="4">Last 4h</button>
           <button type="button" data-hours="6">Last 6h</button>
           <button type="button" data-hours="12">Last 12h</button>
+          <button type="button" data-hours="24">Last 24h</button>
+          <button type="button" data-hours="72">Last 3d</button>
         </div>
 
         <label for="hours-range">Forward Hours</label>
         <div class="slider-group">
           <div class="slider-row">
-            <input id="hours-range" type="range" min="0.5" max="12" step="0.5" value="2">
-            <input id="hours" name="hours" type="number" min="0.5" max="12" step="0.5" value="2" required>
+            <input id="hours-range" type="range" min="0.5" max="72" step="0.5" value="2">
+            <input id="hours" name="hours" type="number" min="0.5" step="0.5" value="2" required>
           </div>
           <div class="slider-hint" id="end-time-hint">End: --</div>
+          <div class="slider-hint slider-warning" id="hours-warning">
+            Long time series &mdash; this may take a while and produce many images
+          </div>
         </div>
 
         <label for="cadence-range">Cadence (minutes)</label>
@@ -600,13 +766,29 @@ INDEX_HTML = """<!doctype html>
 
       <!-- Generated videos -->
       <div class="video-results" id="video-results">
-        <h3>Generated Videos</h3>
+        <div class="video-results-header">
+          <h3>Generated Videos</h3>
+          <span id="video-summary"></span>
+          <button type="button" id="play-all-btn" class="btn-secondary">Play All</button>
+        </div>
         <div class="video-grid" id="video-grid"></div>
+        <div class="video-errors" id="video-errors"></div>
       </div>
 
       <div id="results" class="results"></div>
     </section>
   </main>
+
+  <!-- Fullscreen video modal -->
+  <div class="video-modal" id="video-modal">
+    <button type="button" class="video-modal-close" id="video-modal-close">&times; CLOSE</button>
+    <video id="video-modal-player" controls loop playsinline></video>
+    <div class="video-modal-info" id="video-modal-info"></div>
+    <div class="video-modal-actions">
+      <a id="video-modal-download" class="btn" download>Download MP4</a>
+      <button type="button" id="video-modal-fullscreen" class="btn-secondary">Native Fullscreen</button>
+    </div>
+  </div>
 
   <script>
     const sources = __SOURCES__;
@@ -628,6 +810,7 @@ INDEX_HTML = """<!doctype html>
     const cadenceRange = document.getElementById('cadence-range');
     const cadenceInput = document.getElementById('cadence');
     const endTimeHint = document.getElementById('end-time-hint');
+    const hoursWarning = document.getElementById('hours-warning');
     const cadenceHint = document.getElementById('cadence-hint');
     const fetchSummary = document.getElementById('fetch-summary');
 
@@ -640,6 +823,18 @@ INDEX_HTML = """<!doctype html>
     const videoProgressText = document.getElementById('video-progress-text');
     const videoResults = document.getElementById('video-results');
     const videoGrid = document.getElementById('video-grid');
+    const videoSummary = document.getElementById('video-summary');
+    const videoErrors = document.getElementById('video-errors');
+    const playAllBtn = document.getElementById('play-all-btn');
+
+    const videoModal = document.getElementById('video-modal');
+    const videoModalPlayer = document.getElementById('video-modal-player');
+    const videoModalInfo = document.getElementById('video-modal-info');
+    const videoModalClose = document.getElementById('video-modal-close');
+    const videoModalDownload = document.getElementById('video-modal-download');
+    const videoModalFullscreen = document.getElementById('video-modal-fullscreen');
+
+    const LONG_FETCH_WARNING_HOURS = __WARN_HOURS__;
 
     let currentFetchJobId = null;
 
@@ -681,6 +876,9 @@ INDEX_HTML = """<!doctype html>
       // Cadence / frame count hint
       const frames = calcFrameCount();
       cadenceHint.textContent = `~${frames} frame${frames !== 1 ? 's' : ''} per wavelength`;
+
+      // Long fetch soft warning
+      hoursWarning.style.display = hours > LONG_FETCH_WARNING_HOURS ? 'block' : 'none';
 
       // Fetch summary
       const srcCount = getSelectedSourceCount();
@@ -767,6 +965,7 @@ INDEX_HTML = """<!doctype html>
       videoControls.style.display = 'block';
       videoResults.style.display = 'none';
       videoGrid.innerHTML = '';
+      videoErrors.style.display = 'none';
       videoProgress.style.display = 'none';
       videoProgressBar.style.width = '0%';
     }
@@ -787,7 +986,12 @@ INDEX_HTML = """<!doctype html>
 
     // --- Slider sync ---
     hoursRange.addEventListener('input', () => { hoursInput.value = hoursRange.value; updateHints(); });
-    hoursInput.addEventListener('input', () => { hoursRange.value = hoursInput.value; updateHints(); });
+    hoursInput.addEventListener('input', () => {
+      const v = parseFloat(hoursInput.value);
+      // Slider maxes at 72h; larger values are allowed via the number input
+      hoursRange.value = (v >= 0.5 && v <= 72) ? v : 72;
+      updateHints();
+    });
     cadenceRange.addEventListener('input', () => { cadenceInput.value = cadenceRange.value; updateHints(); });
     cadenceInput.addEventListener('input', () => {
       const v = parseInt(cadenceInput.value);
@@ -907,24 +1111,108 @@ INDEX_HTML = """<!doctype html>
         generateVideosBtn.disabled = false;
         videoProgress.style.display = 'none';
         const ok = job.status === 'completed';
-        appendLog(ok ? `Video generation complete. ${job.videos.length} videos created.` : `Video generation ended: ${job.status}`, !ok);
-        if (job.videos && job.videos.length > 0) {
-          renderVideos(job.videos);
-        }
+        const count = (job.videos || []).length;
+        appendLog(ok ? `Video generation complete. ${count} video${count !== 1 ? 's' : ''} created.` : `Video generation ended: ${job.status}`, !ok);
+        renderVideos(job.videos || [], job.errors || []);
       }
     }
 
-    function renderVideos(videos) {
+    function renderVideos(videos, errors) {
       videoResults.style.display = 'block';
-      videoGrid.innerHTML = videos.map((v) => `
+
+      if (videos.length > 0) {
+        const fps = videos[0].fps;
+        videoSummary.textContent = `${videos.length} video${videos.length !== 1 ? 's' : ''} @ ${fps} fps`;
+        playAllBtn.style.display = '';
+      } else {
+        videoSummary.textContent = 'No videos generated';
+        playAllBtn.style.display = 'none';
+      }
+
+      videoGrid.innerHTML = videos.map((v, i) => {
+        const dlName = `SDO_${v.source}_timelapse.mp4`;
+        return `
         <article class="video-card">
-          <video src="${fileUrl(v.filepath)}" controls loop muted playsinline></video>
+          <div class="video-wrapper">
+            <video data-index="${i}" src="${fileUrl(v.filepath)}" controls loop muted playsinline></video>
+            <button type="button" class="video-maximize-btn" data-index="${i}" title="Maximize / Fullscreen">&#x26F6;</button>
+          </div>
           <h4>${v.source}</h4>
           <p>${v.name} / ${v.wavelength} @ ${v.fps} fps</p>
-          <p><a href="${fileUrl(v.filepath)}" target="_blank" rel="noreferrer" download>Download MP4</a></p>
+          <a class="download-link" href="${fileUrl(v.filepath)}" download="${dlName}">Download MP4</a>
         </article>
-      `).join('');
+      `;
+      }).join('');
+
+      // Stash video metadata for the modal
+      window.__videos = videos;
+
+      // Bind maximize buttons
+      videoGrid.querySelectorAll('.video-maximize-btn').forEach((btn) => {
+        btn.addEventListener('click', () => openVideoModal(parseInt(btn.dataset.index)));
+      });
+
+      // Render skip/error list
+      if (errors && errors.length > 0) {
+        videoErrors.style.display = 'block';
+        videoErrors.innerHTML =
+          `<strong>${errors.length} source${errors.length !== 1 ? 's' : ''} skipped/failed:</strong><br>` +
+          errors.map((e) => `${e.source || '?'}: ${e.error || 'unknown'}`).join('<br>');
+      } else {
+        videoErrors.style.display = 'none';
+        videoErrors.innerHTML = '';
+      }
     }
+
+    // --- Play All toggle ---
+    let allPlaying = false;
+    playAllBtn.addEventListener('click', () => {
+      const players = videoGrid.querySelectorAll('video');
+      if (!allPlaying) {
+        players.forEach((p) => p.play());
+        playAllBtn.textContent = 'Pause All';
+        allPlaying = true;
+      } else {
+        players.forEach((p) => p.pause());
+        playAllBtn.textContent = 'Play All';
+        allPlaying = false;
+      }
+    });
+
+    // --- Fullscreen modal ---
+    function openVideoModal(index) {
+      const v = (window.__videos || [])[index];
+      if (!v) return;
+      const url = fileUrl(v.filepath);
+      videoModalPlayer.src = url;
+      videoModalInfo.innerHTML = `${v.source}<span>${v.name} / ${v.wavelength} @ ${v.fps} fps</span>`;
+      videoModalDownload.href = url;
+      videoModalDownload.setAttribute('download', `SDO_${v.source}_timelapse.mp4`);
+      videoModal.classList.add('open');
+      videoModalPlayer.play().catch(() => {});
+    }
+
+    function closeVideoModal() {
+      videoModal.classList.remove('open');
+      videoModalPlayer.pause();
+      videoModalPlayer.removeAttribute('src');
+      videoModalPlayer.load();
+    }
+
+    videoModalClose.addEventListener('click', closeVideoModal);
+    videoModal.addEventListener('click', (e) => {
+      if (e.target === videoModal) closeVideoModal();
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && videoModal.classList.contains('open')) closeVideoModal();
+    });
+    videoModalFullscreen.addEventListener('click', () => {
+      if (videoModalPlayer.requestFullscreen) {
+        videoModalPlayer.requestFullscreen();
+      } else if (videoModalPlayer.webkitRequestFullscreen) {
+        videoModalPlayer.webkitRequestFullscreen();
+      }
+    });
 
     setDefaultTime();
     renderSources();
@@ -945,7 +1233,12 @@ def build_index() -> bytes:
         }
         for key, value in SDO_SOURCES.items()
     ]
-    return INDEX_HTML.replace("__SOURCES__", json.dumps(sources)).encode("utf-8")
+    return (
+        INDEX_HTML
+        .replace("__SOURCES__", json.dumps(sources))
+        .replace("__WARN_HOURS__", str(LONG_FETCH_WARNING_HOURS))
+        .encode("utf-8")
+    )
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: Dict, status: int = HTTPStatus.OK):
@@ -993,8 +1286,8 @@ def validate_fetch_payload(payload: Dict) -> Dict:
     cadence_minutes = int(payload.get("cadence_minutes", 15))
     width = int(payload.get("width", 1024))
 
-    if hours <= 0 or hours > MAX_HOURS:
-        raise ValueError(f"hours must be between 0 and {MAX_HOURS}")
+    if hours <= 0:
+        raise ValueError("hours must be greater than zero")
     if cadence_minutes <= 0:
         raise ValueError("cadence_minutes must be greater than zero")
     if width <= 0 or width > MAX_WIDTH:
@@ -1012,7 +1305,9 @@ def validate_fetch_payload(payload: Dict) -> Dict:
 
     total = calculate_total(hours, cadence_minutes, len(sources))
     if total > MAX_SAMPLES * len(SDO_SOURCES):
-        raise ValueError("Request is too large; reduce duration, cadence, or source count")
+        raise ValueError(
+            "Request is extremely large; increase cadence minutes or reduce duration/sources"
+        )
 
     target_time = f"{date_value}T{time_value}"
     start_dt = parse_target_datetime(target_time, timezone_mode=timezone_mode)
@@ -1284,9 +1579,44 @@ class SDORequestHandler(BaseHTTPRequestHandler):
         }.get(suffix, "application/octet-stream")
 
         data = resolved.read_bytes()
+        file_size = len(data)
+
+        # Support HTTP Range requests (needed for video seeking / inline playback)
+        range_header = self.headers.get("Range")
+        if range_header and range_header.startswith("bytes="):
+            try:
+                range_spec = range_header[len("bytes="):].split(",")[0].strip()
+                start_str, _, end_str = range_spec.partition("-")
+                start = int(start_str) if start_str else 0
+                end = int(end_str) if end_str else file_size - 1
+                start = max(0, start)
+                end = min(end, file_size - 1)
+                if start > end:
+                    raise ValueError("Invalid range")
+            except Exception:
+                self.send_response(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE)
+                self.send_header("Content-Range", f"bytes */{file_size}")
+                self.end_headers()
+                return
+
+            chunk = data[start:end + 1]
+            self.send_response(HTTPStatus.PARTIAL_CONTENT)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(len(chunk)))
+            if suffix == ".mp4":
+                self.send_header("Content-Disposition", "inline")
+            self.end_headers()
+            self.wfile.write(chunk)
+            return
+
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(file_size))
+        self.send_header("Accept-Ranges", "bytes")
+        if suffix == ".mp4":
+            self.send_header("Content-Disposition", "inline")
         self.end_headers()
         self.wfile.write(data)
 
