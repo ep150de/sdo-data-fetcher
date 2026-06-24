@@ -743,3 +743,154 @@ class SDOProviderClient:
         print(f"✓ Provider used: {PROVIDER_LABELS[provider]}")
 
         return metadata
+
+
+# ---------------------------------------------------------------------------
+# Video generation from time-series images
+# ---------------------------------------------------------------------------
+
+def generate_video_for_source(
+    job_dir: Union[str, Path],
+    source_key: str,
+    fps: int = 10,
+) -> Optional[str]:
+    """Assemble downloaded frames for a single source into an MP4 video.
+
+    Scans the timestamp subdirectories inside *job_dir* (sorted chronologically),
+    collects all images matching *source_key*, and writes them as an MP4.
+
+    Returns the output filepath (relative to the working directory) or ``None``
+    if fewer than 2 frames are found.
+    """
+    import imageio.v3 as iio
+
+    job_path = Path(job_dir)
+    if not job_path.is_dir():
+        raise FileNotFoundError(f"Job directory not found: {job_dir}")
+
+    # Collect timestamp sub-directories, sorted chronologically
+    timestamp_dirs = sorted(
+        [d for d in job_path.iterdir() if d.is_dir() and d.name != "videos"],
+        key=lambda d: d.name,
+    )
+
+    # Gather frames for this source
+    frames_paths: list[Path] = []
+    for ts_dir in timestamp_dirs:
+        matches = sorted(ts_dir.glob(f"SDO_{source_key}_*.*"))
+        for match in matches:
+            if match.suffix.lower() in {".png", ".jpg", ".jpeg", ".webp"}:
+                frames_paths.append(match)
+                break  # one frame per timestamp per source
+
+    if len(frames_paths) < 2:
+        return None
+
+    # Read frames, normalising to RGB
+    import numpy as np
+
+    frames = []
+    target_hw = None  # (height, width) only
+    for fp in frames_paths:
+        img = iio.imread(fp)
+        # Convert grayscale to RGB
+        if img.ndim == 2:
+            img = np.stack([img, img, img], axis=-1)
+        # Convert RGBA to RGB
+        elif img.ndim == 3 and img.shape[2] == 4:
+            img = img[:, :, :3]
+        if target_hw is None:
+            target_hw = img.shape[:2]
+        # Only include frames with matching spatial dimensions
+        if img.shape[:2] == target_hw:
+            frames.append(img)
+
+    if len(frames) < 2:
+        return None
+
+    # Write video
+    video_dir = job_path / "videos"
+    video_dir.mkdir(parents=True, exist_ok=True)
+    source_info = SDO_SOURCES.get(source_key, {})
+    wavelength_label = source_info.get("wavelength", source_key).replace("Å", "A")
+    output_path = video_dir / f"SDO_{source_key}_{wavelength_label}_timelapse.mp4"
+
+    iio.imwrite(
+        output_path,
+        frames,
+        fps=fps,
+        plugin="pyav",
+        codec="libx264",
+        out_pixel_format="yuv420p",
+    )
+
+    print(f"✓ Video saved: {output_path} ({len(frames)} frames @ {fps} fps)")
+    return str(output_path)
+
+
+def generate_videos_for_job(
+    job_dir: Union[str, Path],
+    sources: Optional[List[str]] = None,
+    fps: int = 10,
+    progress_callback: Optional[Callable[[Dict], None]] = None,
+) -> Dict:
+    """Generate timelapse videos for all (or selected) sources in a job directory.
+
+    Returns a summary dict with generated video paths and any errors.
+    """
+    job_path = Path(job_dir)
+
+    # Determine sources from manifest if not specified
+    if sources is None:
+        manifest_file = job_path / "manifest.json"
+        if manifest_file.exists():
+            with open(manifest_file, "r", encoding="utf-8") as f:
+                manifest = json.load(f)
+            sources = manifest.get("sources", list(SDO_SOURCES.keys()))
+        else:
+            sources = list(SDO_SOURCES.keys())
+
+    total = len(sources)
+    completed = 0
+    videos: list[Dict] = []
+    errors: list[Dict] = []
+
+    for source_key in sources:
+        try:
+            video_path = generate_video_for_source(job_path, source_key, fps=fps)
+            completed += 1
+            if video_path:
+                source_info = SDO_SOURCES.get(source_key, {})
+                entry = {
+                    "source": source_key,
+                    "name": source_info.get("name", source_key),
+                    "wavelength": source_info.get("wavelength", ""),
+                    "filepath": video_path,
+                    "fps": fps,
+                }
+                videos.append(entry)
+                event = {"type": "result", "completed": completed, "total": total, "result": entry}
+            else:
+                skip = {
+                    "source": source_key,
+                    "error": "Fewer than 2 frames available, skipped",
+                }
+                errors.append(skip)
+                event = {"type": "skip", "completed": completed, "total": total, "error": skip}
+        except Exception as exc:
+            completed += 1
+            err = {"source": source_key, "error": str(exc)}
+            errors.append(err)
+            event = {"type": "error", "completed": completed, "total": total, "error": err}
+
+        if progress_callback:
+            progress_callback(event)
+
+    return {
+        "job_dir": str(job_path),
+        "total_sources": total,
+        "videos_generated": len(videos),
+        "skipped_or_failed": len(errors),
+        "videos": videos,
+        "errors": errors,
+    }

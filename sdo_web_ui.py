@@ -15,7 +15,12 @@ import time
 from typing import Dict
 from urllib.parse import unquote, urlparse
 
-from sdo_provider import SDOProviderClient, SDO_SOURCES, parse_target_datetime
+from sdo_provider import (
+    SDOProviderClient,
+    SDO_SOURCES,
+    generate_videos_for_job,
+    parse_target_datetime,
+)
 
 
 HOST = "127.0.0.1"
@@ -27,6 +32,9 @@ MAX_WIDTH = 2048
 
 JOBS: Dict[str, Dict] = {}
 JOBS_LOCK = threading.Lock()
+
+VIDEO_JOBS: Dict[str, Dict] = {}
+VIDEO_JOBS_LOCK = threading.Lock()
 
 
 INDEX_HTML = """<!doctype html>
@@ -132,7 +140,12 @@ INDEX_HTML = """<!doctype html>
       box-shadow: 0 0 0 3px rgba(0, 199, 253, 0.25);
     }
 
-    button {
+    /* Native datetime-local / color-scheme for dark pickers */
+    input[type="datetime-local"] {
+      color-scheme: dark;
+    }
+
+    button, .btn {
       margin-top: 18px;
       cursor: pointer;
       color: #00172a;
@@ -141,6 +154,13 @@ INDEX_HTML = """<!doctype html>
       font-weight: 900;
       text-transform: uppercase;
       box-shadow: 4px 4px 0 var(--intel-blue);
+      text-align: center;
+      display: inline-block;
+      text-decoration: none;
+    }
+
+    button:hover:not(:disabled), .btn:hover {
+      filter: brightness(1.12);
     }
 
     button:disabled {
@@ -148,10 +168,92 @@ INDEX_HTML = """<!doctype html>
       opacity: 0.65;
     }
 
+    .btn-secondary {
+      background: linear-gradient(180deg, var(--intel-blue), var(--intel-dark));
+      color: var(--white);
+      border-color: var(--intel-light);
+      font-weight: 700;
+    }
+
     .split {
       display: grid;
       grid-template-columns: 1fr 1fr;
       gap: 12px;
+    }
+
+    /* --- Presets row --- */
+    .presets {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-top: 10px;
+    }
+
+    .presets button {
+      margin: 0;
+      padding: 6px 10px;
+      font-size: 0.72rem;
+      font-weight: 700;
+      width: auto;
+      box-shadow: 2px 2px 0 var(--intel-blue);
+    }
+
+    .presets button.active {
+      background: linear-gradient(180deg, var(--warning), #ffe0a0);
+      border-color: var(--warning);
+      color: #1a1000;
+    }
+
+    /* --- Slider + number combo --- */
+    .slider-group {
+      margin-top: 4px;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .slider-row input[type="range"] {
+      flex: 1;
+      padding: 0;
+      height: 8px;
+      border: none;
+      border-radius: 4px;
+      background: var(--intel-dark);
+      accent-color: var(--intel-light);
+      cursor: pointer;
+    }
+
+    .slider-row input[type="number"] {
+      width: 72px;
+      flex: 0 0 72px;
+      padding: 7px 8px;
+      text-align: center;
+      font-size: 0.9rem;
+    }
+
+    .slider-hint {
+      color: var(--muted);
+      font-size: 0.72rem;
+      margin-top: 4px;
+      opacity: 0.85;
+    }
+
+    /* --- Fetch summary --- */
+    .fetch-summary {
+      margin-top: 14px;
+      padding: 10px 12px;
+      border: 2px solid rgba(0, 199, 253, 0.4);
+      background: rgba(0, 104, 181, 0.12);
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.6;
+    }
+
+    .fetch-summary strong {
+      color: var(--white);
     }
 
     .toggle-row {
@@ -303,6 +405,82 @@ INDEX_HTML = """<!doctype html>
       margin-right: 10px;
     }
 
+    /* --- Video section --- */
+    .video-controls {
+      margin-top: 18px;
+      padding: 14px;
+      border: 2px solid var(--intel-light);
+      background: rgba(0, 60, 113, 0.25);
+      display: none;
+    }
+
+    .video-controls h3 {
+      margin: 0 0 10px;
+      color: var(--intel-light);
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .video-controls .split {
+      align-items: end;
+    }
+
+    .video-progress {
+      margin-top: 12px;
+      display: none;
+    }
+
+    .video-results {
+      margin-top: 18px;
+      display: none;
+    }
+
+    .video-results h3 {
+      margin: 0 0 12px;
+      color: var(--ok);
+      font-size: 0.95rem;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+
+    .video-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 14px;
+    }
+
+    .video-card {
+      border: 2px solid var(--intel-blue);
+      background: #06111e;
+      padding: 12px;
+    }
+
+    .video-card video {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: contain;
+      background: #000;
+      border: 1px solid rgba(0, 199, 253, 0.35);
+    }
+
+    .video-card h4 {
+      margin: 8px 0 4px;
+      color: var(--intel-light);
+      font-size: 0.95rem;
+    }
+
+    .video-card p {
+      margin: 4px 0;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+
+    .video-card a {
+      color: var(--white);
+      font-size: 0.75rem;
+    }
+
     .error { color: var(--danger); }
 
     @media (max-width: 920px) {
@@ -326,16 +504,8 @@ INDEX_HTML = """<!doctype html>
     <section class="panel">
       <h2>Acquisition Controls</h2>
       <form id="fetch-form">
-        <div class="split">
-          <div>
-            <label for="date">Target Date</label>
-            <input id="date" name="date" type="date" required>
-          </div>
-          <div>
-            <label for="time">Target Time</label>
-            <input id="time" name="time" type="time" step="1" required>
-          </div>
-        </div>
+        <label for="start-datetime">Start Date & Time</label>
+        <input id="start-datetime" name="start_datetime" type="datetime-local" step="1" required>
 
         <label for="timezone-mode">Timezone Mode</label>
         <select id="timezone-mode" name="timezone_mode">
@@ -343,15 +513,30 @@ INDEX_HTML = """<!doctype html>
           <option value="local">Local timezone</option>
         </select>
 
-        <div class="split">
-          <div>
-            <label for="hours">Forward Hours</label>
-            <input id="hours" name="hours" type="number" min="0.1" max="12" step="0.5" value="2" required>
+        <div class="presets" id="presets">
+          <button type="button" data-hours="1">Last 1h</button>
+          <button type="button" data-hours="2">Last 2h</button>
+          <button type="button" data-hours="4">Last 4h</button>
+          <button type="button" data-hours="6">Last 6h</button>
+          <button type="button" data-hours="12">Last 12h</button>
+        </div>
+
+        <label for="hours-range">Forward Hours</label>
+        <div class="slider-group">
+          <div class="slider-row">
+            <input id="hours-range" type="range" min="0.5" max="12" step="0.5" value="2">
+            <input id="hours" name="hours" type="number" min="0.5" max="12" step="0.5" value="2" required>
           </div>
-          <div>
-            <label for="cadence">Cadence Minutes</label>
+          <div class="slider-hint" id="end-time-hint">End: --</div>
+        </div>
+
+        <label for="cadence-range">Cadence (minutes)</label>
+        <div class="slider-group">
+          <div class="slider-row">
+            <input id="cadence-range" type="range" min="1" max="60" step="1" value="30">
             <input id="cadence" name="cadence" type="number" min="1" max="180" step="1" value="30" required>
           </div>
+          <div class="slider-hint" id="cadence-hint">-- frames per wavelength</div>
         </div>
 
         <div class="split">
@@ -372,6 +557,8 @@ INDEX_HTML = """<!doctype html>
         <label class="toggle-row"><input id="all-sources" type="checkbox" checked> Fetch all wavelengths</label>
         <div id="source-list" class="sources"></div>
 
+        <div class="fetch-summary" id="fetch-summary"></div>
+
         <button id="submit" type="submit">Fetch Solar Moment</button>
       </form>
     </section>
@@ -386,6 +573,37 @@ INDEX_HTML = """<!doctype html>
       </div>
       <div class="progress-shell"><div id="progress-bar" class="progress-bar"></div></div>
       <div id="log" class="log">READY. Awaiting target time.</div>
+
+      <!-- Video generation controls (shown after fetch completes) -->
+      <div class="video-controls" id="video-controls">
+        <h3>Generate Timelapse Videos</h3>
+        <p style="color:var(--muted);font-size:0.78rem;margin:0 0 10px">
+          Create an MP4 timelapse for each wavelength from the downloaded frames.
+        </p>
+        <div class="split">
+          <div>
+            <label for="video-fps" style="margin-top:0">Frames Per Second</label>
+            <div class="slider-row">
+              <input id="video-fps-range" type="range" min="1" max="30" step="1" value="10">
+              <input id="video-fps" type="number" min="1" max="30" step="1" value="10">
+            </div>
+          </div>
+          <div style="display:flex;align-items:end">
+            <button type="button" id="generate-videos-btn" style="margin:0;width:100%">Generate Videos</button>
+          </div>
+        </div>
+        <div class="video-progress" id="video-progress">
+          <div class="progress-shell"><div id="video-progress-bar" class="progress-bar"></div></div>
+          <div class="slider-hint" id="video-progress-text">Generating...</div>
+        </div>
+      </div>
+
+      <!-- Generated videos -->
+      <div class="video-results" id="video-results">
+        <h3>Generated Videos</h3>
+        <div class="video-grid" id="video-grid"></div>
+      </div>
+
       <div id="results" class="results"></div>
     </section>
   </main>
@@ -404,12 +622,73 @@ INDEX_HTML = """<!doctype html>
     const log = document.getElementById('log');
     const results = document.getElementById('results');
 
-    function pad(value) { return String(value).padStart(2, '0'); }
+    const startDatetime = document.getElementById('start-datetime');
+    const hoursRange = document.getElementById('hours-range');
+    const hoursInput = document.getElementById('hours');
+    const cadenceRange = document.getElementById('cadence-range');
+    const cadenceInput = document.getElementById('cadence');
+    const endTimeHint = document.getElementById('end-time-hint');
+    const cadenceHint = document.getElementById('cadence-hint');
+    const fetchSummary = document.getElementById('fetch-summary');
+
+    const videoControls = document.getElementById('video-controls');
+    const videoFpsRange = document.getElementById('video-fps-range');
+    const videoFpsInput = document.getElementById('video-fps');
+    const generateVideosBtn = document.getElementById('generate-videos-btn');
+    const videoProgress = document.getElementById('video-progress');
+    const videoProgressBar = document.getElementById('video-progress-bar');
+    const videoProgressText = document.getElementById('video-progress-text');
+    const videoResults = document.getElementById('video-results');
+    const videoGrid = document.getElementById('video-grid');
+
+    let currentFetchJobId = null;
+
+    function pad(v) { return String(v).padStart(2, '0'); }
 
     function setDefaultTime() {
       const now = new Date(Date.now() - 60 * 60 * 1000);
-      document.getElementById('date').value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
-      document.getElementById('time').value = `${pad(now.getHours())}:${pad(now.getMinutes())}:00`;
+      const local = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:00`;
+      startDatetime.value = local;
+    }
+
+    function getSelectedSourceCount() {
+      if (allSources.checked) return sources.length;
+      return document.querySelectorAll('input[name="source"]:checked').length;
+    }
+
+    function calcFrameCount() {
+      const hours = parseFloat(hoursInput.value) || 0;
+      const cadence = parseInt(cadenceInput.value) || 1;
+      const windowMin = hours * 60;
+      let count = 1;
+      let elapsed = 0;
+      while (elapsed + cadence <= windowMin) { count++; elapsed += cadence; }
+      return count;
+    }
+
+    function updateHints() {
+      // End time hint
+      const dtVal = startDatetime.value;
+      const hours = parseFloat(hoursInput.value) || 0;
+      if (dtVal) {
+        const start = new Date(dtVal);
+        const end = new Date(start.getTime() + hours * 3600000);
+        endTimeHint.textContent = `End: ${end.getFullYear()}-${pad(end.getMonth()+1)}-${pad(end.getDate())} ${pad(end.getHours())}:${pad(end.getMinutes())}`;
+      } else {
+        endTimeHint.textContent = 'End: --';
+      }
+
+      // Cadence / frame count hint
+      const frames = calcFrameCount();
+      cadenceHint.textContent = `~${frames} frame${frames !== 1 ? 's' : ''} per wavelength`;
+
+      // Fetch summary
+      const srcCount = getSelectedSourceCount();
+      const total = frames * srcCount;
+      fetchSummary.innerHTML =
+        `<strong>${srcCount}</strong> wavelength${srcCount !== 1 ? 's' : ''} ` +
+        `x <strong>${frames}</strong> frame${frames !== 1 ? 's' : ''} ` +
+        `= <strong>${total}</strong> total image${total !== 1 ? 's' : ''}`;
     }
 
     function renderSources() {
@@ -419,11 +698,15 @@ INDEX_HTML = """<!doctype html>
           <span>${source.key}<br>${source.wavelength}</span>
         </label>
       `).join('');
+      // Bind change events for summary updates
+      document.querySelectorAll('input[name="source"]').forEach((box) => {
+        box.addEventListener('change', updateHints);
+      });
     }
 
     function appendLog(message, isError = false) {
       const prefix = new Date().toLocaleTimeString();
-      log.textContent += `\n[${prefix}] ${message}`;
+      log.textContent += `\\n[${prefix}] ${message}`;
       if (isError) log.classList.add('error');
       log.scrollTop = log.scrollHeight;
     }
@@ -480,6 +763,14 @@ INDEX_HTML = """<!doctype html>
       renderResults(job.results);
     }
 
+    function showVideoControls() {
+      videoControls.style.display = 'block';
+      videoResults.style.display = 'none';
+      videoGrid.innerHTML = '';
+      videoProgress.style.display = 'none';
+      videoProgressBar.style.width = '0%';
+    }
+
     async function pollJob(id) {
       const response = await fetch(`/api/job/${id}`);
       const job = await response.json();
@@ -488,14 +779,47 @@ INDEX_HTML = """<!doctype html>
         setTimeout(() => pollJob(id), 1200);
       } else {
         submit.disabled = false;
-        appendLog(job.status === 'completed' ? 'Fetch complete.' : `Fetch ended: ${job.status}`, job.status === 'failed');
+        const ok = job.status === 'completed';
+        appendLog(ok ? 'Fetch complete.' : `Fetch ended: ${job.status}`, !ok);
+        if (ok) showVideoControls();
       }
     }
+
+    // --- Slider sync ---
+    hoursRange.addEventListener('input', () => { hoursInput.value = hoursRange.value; updateHints(); });
+    hoursInput.addEventListener('input', () => { hoursRange.value = hoursInput.value; updateHints(); });
+    cadenceRange.addEventListener('input', () => { cadenceInput.value = cadenceRange.value; updateHints(); });
+    cadenceInput.addEventListener('input', () => {
+      const v = parseInt(cadenceInput.value);
+      if (v >= 1 && v <= 60) cadenceRange.value = v;
+      updateHints();
+    });
+    startDatetime.addEventListener('input', updateHints);
+
+    // Video FPS slider sync
+    videoFpsRange.addEventListener('input', () => { videoFpsInput.value = videoFpsRange.value; });
+    videoFpsInput.addEventListener('input', () => { videoFpsRange.value = videoFpsInput.value; });
+
+    // --- Presets ---
+    document.getElementById('presets').addEventListener('click', (e) => {
+      const btn = e.target.closest('button[data-hours]');
+      if (!btn) return;
+      const h = parseFloat(btn.dataset.hours);
+      const now = new Date(Date.now() - h * 3600000);
+      startDatetime.value = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}T${pad(now.getHours())}:${pad(now.getMinutes())}:00`;
+      hoursInput.value = h;
+      hoursRange.value = h;
+      // highlight active preset
+      document.querySelectorAll('#presets button').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      updateHints();
+    });
 
     allSources.addEventListener('change', () => {
       document.querySelectorAll('input[name="source"]').forEach((box) => {
         box.checked = allSources.checked;
       });
+      updateHints();
     });
 
     form.addEventListener('submit', async (event) => {
@@ -504,14 +828,21 @@ INDEX_HTML = """<!doctype html>
       log.classList.remove('error');
       log.textContent = 'TRANSMITTING FETCH REQUEST...';
       results.innerHTML = '';
+      videoControls.style.display = 'none';
+      videoResults.style.display = 'none';
+      currentFetchJobId = null;
+
+      const dtVal = startDatetime.value;
+      // Split datetime-local value into date and time parts
+      const [datePart, timePart] = dtVal.split('T');
 
       const selectedSources = Array.from(document.querySelectorAll('input[name="source"]:checked')).map((box) => box.value);
       const payload = {
-        date: document.getElementById('date').value,
-        time: document.getElementById('time').value,
+        date: datePart,
+        time: timePart || '00:00:00',
         timezone_mode: document.getElementById('timezone-mode').value,
-        hours: Number(document.getElementById('hours').value),
-        cadence_minutes: Number(document.getElementById('cadence').value),
+        hours: Number(hoursInput.value),
+        cadence_minutes: Number(cadenceInput.value),
         width: Number(document.getElementById('width').value),
         image_type: document.getElementById('image-type').value,
         all_sources: allSources.checked,
@@ -526,6 +857,7 @@ INDEX_HTML = """<!doctype html>
         });
         const data = await response.json();
         if (!response.ok) throw new Error(data.error || 'Request failed');
+        currentFetchJobId = data.job_id;
         appendLog(`Job ${data.job_id} accepted. Total downloads: ${data.total}`);
         pollJob(data.job_id);
       } catch (error) {
@@ -535,8 +867,68 @@ INDEX_HTML = """<!doctype html>
       }
     });
 
+    // --- Video generation ---
+    generateVideosBtn.addEventListener('click', async () => {
+      if (!currentFetchJobId) return;
+      generateVideosBtn.disabled = true;
+      videoProgress.style.display = 'block';
+      videoProgressBar.style.width = '0%';
+      videoProgressText.textContent = 'Starting video generation...';
+      videoResults.style.display = 'none';
+      appendLog('Requesting video generation...');
+
+      const fps = parseInt(videoFpsInput.value) || 10;
+      try {
+        const response = await fetch('/api/video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fetch_job_id: currentFetchJobId, fps })
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Video request failed');
+        appendLog(`Video job ${data.video_job_id} accepted. Sources: ${data.total}`);
+        pollVideoJob(data.video_job_id);
+      } catch (error) {
+        generateVideosBtn.disabled = false;
+        appendLog(error.message, true);
+      }
+    });
+
+    async function pollVideoJob(id) {
+      const response = await fetch(`/api/video-job/${id}`);
+      const job = await response.json();
+      const percent = job.total ? Math.round((job.completed / job.total) * 100) : 0;
+      videoProgressBar.style.width = `${percent}%`;
+      videoProgressText.textContent = `${job.completed} / ${job.total} wavelengths processed`;
+
+      if (job.status === 'running' || job.status === 'queued') {
+        setTimeout(() => pollVideoJob(id), 800);
+      } else {
+        generateVideosBtn.disabled = false;
+        videoProgress.style.display = 'none';
+        const ok = job.status === 'completed';
+        appendLog(ok ? `Video generation complete. ${job.videos.length} videos created.` : `Video generation ended: ${job.status}`, !ok);
+        if (job.videos && job.videos.length > 0) {
+          renderVideos(job.videos);
+        }
+      }
+    }
+
+    function renderVideos(videos) {
+      videoResults.style.display = 'block';
+      videoGrid.innerHTML = videos.map((v) => `
+        <article class="video-card">
+          <video src="${fileUrl(v.filepath)}" controls loop muted playsinline></video>
+          <h4>${v.source}</h4>
+          <p>${v.name} / ${v.wavelength} @ ${v.fps} fps</p>
+          <p><a href="${fileUrl(v.filepath)}" target="_blank" rel="noreferrer" download>Download MP4</a></p>
+        </article>
+      `).join('');
+    }
+
     setDefaultTime();
     renderSources();
+    updateHints();
   </script>
 </body>
 </html>
@@ -681,6 +1073,44 @@ def run_job(job_id: str):
             JOBS[job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
 
 
+def run_video_job(video_job_id: str):
+    with VIDEO_JOBS_LOCK:
+        vjob = VIDEO_JOBS[video_job_id]
+        vjob["status"] = "running"
+        vjob["started_at"] = datetime.now(timezone.utc).isoformat()
+
+    def progress(event: Dict):
+        with VIDEO_JOBS_LOCK:
+            vjob = VIDEO_JOBS[video_job_id]
+            vjob["completed"] = event.get("completed", vjob["completed"])
+            if event["type"] == "result":
+                vjob["videos"].append(event["result"])
+            elif event["type"] in ("error", "skip"):
+                vjob["errors"].append(event["error"])
+
+    try:
+        with VIDEO_JOBS_LOCK:
+            job_dir = VIDEO_JOBS[video_job_id]["job_dir"]
+            sources = VIDEO_JOBS[video_job_id]["sources"]
+            fps = VIDEO_JOBS[video_job_id]["fps"]
+
+        result = generate_videos_for_job(
+            job_dir=job_dir,
+            sources=sources,
+            fps=fps,
+            progress_callback=progress,
+        )
+
+        with VIDEO_JOBS_LOCK:
+            VIDEO_JOBS[video_job_id]["status"] = "completed"
+            VIDEO_JOBS[video_job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+    except Exception as exc:
+        with VIDEO_JOBS_LOCK:
+            VIDEO_JOBS[video_job_id]["status"] = "failed"
+            VIDEO_JOBS[video_job_id]["errors"].append({"error": str(exc)})
+            VIDEO_JOBS[video_job_id]["completed_at"] = datetime.now(timezone.utc).isoformat()
+
+
 class SDORequestHandler(BaseHTTPRequestHandler):
     server_version = "SDOWebUI/1.0"
 
@@ -717,6 +1147,20 @@ class SDORequestHandler(BaseHTTPRequestHandler):
             json_response(self, payload)
             return
 
+        if parsed.path.startswith("/api/video-job/"):
+            vjob_id = parsed.path.rsplit("/", 1)[-1]
+            with VIDEO_JOBS_LOCK:
+                vjob = VIDEO_JOBS.get(vjob_id)
+                if vjob:
+                    payload = json.loads(json.dumps(vjob))
+                else:
+                    payload = None
+            if not payload:
+                json_response(self, {"error": "Video job not found"}, HTTPStatus.NOT_FOUND)
+                return
+            json_response(self, payload)
+            return
+
         if parsed.path.startswith("/files/"):
             self.serve_file(parsed.path[len("/files/"):])
             return
@@ -725,10 +1169,18 @@ class SDORequestHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
-        if parsed.path != "/api/fetch":
-            text_response(self, "Not found", HTTPStatus.NOT_FOUND)
+
+        if parsed.path == "/api/fetch":
+            self._handle_fetch()
             return
 
+        if parsed.path == "/api/video":
+            self._handle_video()
+            return
+
+        text_response(self, "Not found", HTTPStatus.NOT_FOUND)
+
+    def _handle_fetch(self):
         try:
             length = int(self.headers.get("Content-Length", "0"))
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
@@ -759,6 +1211,55 @@ class SDORequestHandler(BaseHTTPRequestHandler):
         thread.start()
         json_response(self, {"job_id": job_id, "total": params["total"]}, HTTPStatus.ACCEPTED)
 
+    def _handle_video(self):
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length).decode("utf-8"))
+        except Exception as exc:
+            json_response(self, {"error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+
+        fetch_job_id = str(payload.get("fetch_job_id", "")).strip()
+        fps = int(payload.get("fps", 10))
+        if fps < 1 or fps > 30:
+            fps = 10
+
+        # Look up the fetch job to find its output directory and sources
+        with JOBS_LOCK:
+            fetch_job = JOBS.get(fetch_job_id)
+            if not fetch_job:
+                json_response(self, {"error": "Fetch job not found"}, HTTPStatus.NOT_FOUND)
+                return
+            if fetch_job["status"] != "completed":
+                json_response(self, {"error": "Fetch job has not completed yet"}, HTTPStatus.BAD_REQUEST)
+                return
+            job_dir = str(OUTPUT_DIR / f"web_{fetch_job_id}")
+            job_sources = list(fetch_job["params"].get("sources", []))
+
+        video_job_id = f"vid_{int(time.time())}_{len(VIDEO_JOBS) + 1}"
+        vjob = {
+            "id": video_job_id,
+            "fetch_job_id": fetch_job_id,
+            "status": "queued",
+            "job_dir": job_dir,
+            "sources": job_sources,
+            "fps": fps,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+            "started_at": None,
+            "completed_at": None,
+            "completed": 0,
+            "total": len(job_sources),
+            "videos": [],
+            "errors": [],
+        }
+
+        with VIDEO_JOBS_LOCK:
+            VIDEO_JOBS[video_job_id] = vjob
+
+        thread = threading.Thread(target=run_video_job, args=(video_job_id,), daemon=True)
+        thread.start()
+        json_response(self, {"video_job_id": video_job_id, "total": len(job_sources)}, HTTPStatus.ACCEPTED)
+
     def serve_file(self, encoded_path: str):
         requested = Path(unquote(encoded_path))
         try:
@@ -779,6 +1280,7 @@ class SDORequestHandler(BaseHTTPRequestHandler):
             ".jpeg": "image/jpeg",
             ".webp": "image/webp",
             ".json": "application/json; charset=utf-8",
+            ".mp4": "video/mp4",
         }.get(suffix, "application/octet-stream")
 
         data = resolved.read_bytes()
